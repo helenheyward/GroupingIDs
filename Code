@@ -1,0 +1,162 @@
+
+ALTER PROCEDURE [dbo].[rptComplianceDashboard]
+
+AS
+
+/*
+02/12/2016 
+Compliance Dashboard showing worst offenders by year, this month and last month
+*/
+
+WITH c
+
+AS
+
+--initial aggregrates
+
+(SELECT
+
+	  GROUPING_ID([ProviderName], dd.[MonthsFromToday]) AS ID,
+	  [ProviderName]
+	  ,dd.MonthsFromToday AS [MonthsFromToday]
+	  ,MAX(dd.[Year]) AS [Year]
+	  ,MAX(dd.[Month]) AS [Month]
+      ,SUM(CASE
+				WHEN [PPM Status] = 'Done' THEN 1
+				ELSE 0
+		END) AS [Done]
+	  ,SUM(CASE
+				WHEN [PPM Status] = 'To Do' THEN 1
+				ELSE 0
+		END) AS [ToDo]
+	  ,COUNT(WorkOrderNumber) AS WorkOrderCount
+	  ,SUM(CASE
+				WHEN [PPM Status] = 'Awaiting Additional Info' THEN 1
+				ELSE 0
+		END) AS [AwaitingAdditionalInfo]
+	  ,SUM(CASE
+				WHEN dd.[MonthsFromToday] = 0 THEN 1 
+				ELSE 0
+		END) AS [DueThisMonth]
+	  ,SUM(CASE
+				WHEN (jcpw.[RequirementInPast]) = 'Yes' THEN 1
+				ELSE 0
+		END) AS [RequirementinPast]	   
+	 
+	 
+FROM [dbo].[JLPCompliancePPMWons] jcpw
+		INNER JOIN [DimDate] dd
+		ON CAST(jcpw.FixSLATargetDate AS DATE) = dd.[date]
+		AND dd.[YearsFromToday] = 0
+		WHERE jcpw.[WOCurrentStatus] != 'Cancelled'
+		AND [ClientComplianceCategories-IsStatutoryCompliance] = 'Yes'
+
+
+GROUP BY GROUPING SETS
+
+	   (
+		   ([ProviderName]),
+		   ([ProviderName], dd.[MonthsFromToday])
+	   )
+
+),
+
+c2
+
+AS
+
+(SELECT
+		   c.ID,
+		   c.ProviderName,
+		   c.MonthsFromToday,
+		   c.[Year],
+		   c.[Month],
+		   c.[Done],
+		   c.[ToDo],
+		   c.[WorkOrderCount],
+		   c.[AwaitingAdditionalInfo],
+		   c.[DueThisMonth],
+		   c.[RequirementinPast],
+		   CAST(((Done / CAST(WorkOrderCount AS FLOAT)) * 100) AS DECIMAL (5,2)) AS [PercentageDone],
+		   CAST(((ToDo / CAST(WorkOrderCount AS FLOAT)) * 100) AS DECIMAL (5,2)) AS [PercentageToDo]
+	   
+FROM			
+			c 
+				
+WHERE	   [MonthsFromToday] IS NULL 
+		   OR [MonthsFromToday] IN (0, 1) 
+-- this gives you three results.  one for MonthsFromToday 0 which is this month and one for MonthsFromToday 1 which
+--is last month and one for MonthsFromToday (NULL) which is a year from today.  **Ignore Month column for Year, as that gives MAX Month, which is not relevant to the Year Data**.
+
+),
+
+
+--Now calculate your percentage column
+
+c3
+
+AS
+
+(	SELECT
+
+		   c2.[ID],
+		   c2.[ProviderName],
+		   c2.[MonthsFromToday],
+		   c2.[Year],
+		   c2.[Month],
+		   c2.[Done],
+		   c2.[ToDo],
+		   c2.[WorkOrderCount],
+		   c2.[AwaitingAdditionalInfo],
+		   c2.[DueThisMonth],
+		   c2.[RequirementinPast],
+		   c2.[PercentageDone],
+		   DENSE_RANK () OVER (PARTITION BY ID, [MonthsFromToday] ORDER BY [PercentageDone] ASC) AS [Percentage_Done_Rank_By_ID], --split down by volume, eg rank = 1 but if more are to do then they should be a lower rank?
+		   c2.[PercentageToDo],
+		   DENSE_RANK () OVER (PARTITION BY ID, [MonthsFromToday] ORDER BY [PercentageToDo] ASC) AS [Percentage_ToDo_Rank_By_ID]
+		   
+
+FROM 
+			c2
+		 
+)
+
+SELECT     c3.[ID],
+		   c3.[ProviderName],
+		   c3.[MonthsFromToday],
+		   c3.[Year],
+		   c3.[Month],
+		   c3.[Done],
+		   c3.[ToDo],
+		   c3.[WorkOrderCount],
+		   c3.[AwaitingAdditionalInfo],
+		   c3.[DueThisMonth],
+		   c3.[RequirementinPast],
+		   c3.[PercentageDone],
+		   c3.[Percentage_Done_Rank_By_ID],
+		   c3.[PercentageToDo],
+		   c3.[Percentage_ToDo_Rank_By_ID]
+		   
+
+FROM c3
+
+GO
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
